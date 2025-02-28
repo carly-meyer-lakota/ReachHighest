@@ -60,21 +60,12 @@ def get_related_terms(word):
             related_terms.add(hyponym.name().split('.')[0])
     return list(related_terms)
 
-# Expanded search function
-def expanded_search(query, data):
-    expanded_terms = get_synonyms(query) + get_related_terms(query)  # Combine synonyms and related terms
-    results = []
-    for term in expanded_terms:
-        # Perform fuzzy search for each expanded term
-        results += fuzzy_search(term, data)
-    return sorted(results, key=lambda x: x['relevance'], reverse=True)
-
 # Fuzzy search function
-def fuzzy_search(query, data):
+def fuzzy_search(query, data, columns):
     matches = []
     for _, row in data.iterrows():
         best_score = 0
-        for col in all_columns:
+        for col in columns:
             if pd.notna(row[col]):
                 score = process.extractOne(query, [str(row[col])])[1]
                 best_score = max(best_score, score)
@@ -82,6 +73,16 @@ def fuzzy_search(query, data):
             matches.append({'score': best_score, 'row': row})
     return matches
 
+# Expanded search function
+def expanded_search(query, data, columns):
+    expanded_terms = get_synonyms(query) + get_related_terms(query)  # Combine synonyms and related terms
+    results = []
+    for term in expanded_terms:
+        # Perform fuzzy search for each expanded term
+        results += fuzzy_search(term, data, columns)
+    return sorted(results, key=lambda x: x['score'], reverse=True)
+
+# Highlight fuzzy match
 def highlight_fuzzy_match(text, query):
     if pd.isna(text) or not query:
         return text
@@ -94,26 +95,26 @@ def highlight_fuzzy_match(text, query):
 
 if st.button("Search"):
     matches = []
-   
+
     if topic_query:
-        matches = expanded_search(topic_query, data)  # Use expanded search for topics
-   
+        # Use expanded search for topics with the specific topic columns
+        matches = expanded_search(topic_query, data, topic_columns)
+
     if concept_query:
-        matches = expanded_search(concept_query, data)  # Use expanded search for concepts
-   
+        # Use expanded search for concepts with the specific concept columns
+        matches += expanded_search(concept_query, data, concept_columns)
+
     # Sort matches by relevance
     matches.sort(reverse=True, key=lambda x: x['score'])
    
-    st.write(f"Found {len(matches)} matches")
-   
-    for match in matches:
-        row = match['row']
-        st.markdown(f"### Grade Level: {row['RH Level']}, Unit {row['Unit Number']} - {row['Unit Name']}")
-        st.markdown("---")
-        for col in all_columns:
-            if col in topic_columns or col in concept_columns or col in ["RH Level", "Unit Number", "Unit Name"]:
-                highlighted_text = highlight_fuzzy_match(row[col], topic_query if col in topic_columns else concept_query)
-                st.markdown(f"**{col}:** {highlighted_text}", unsafe_allow_html=True)
-            else:
-                st.markdown(f"**{col}:** {row[col]}")
-        st.markdown("---")
+    if matches:
+        st.write(f"Found {len(matches)} matches")
+        for match in matches:
+            row = match['row']
+            st.markdown(f"### Grade Level: {row['RH Level']}, Unit {row['Unit Number']} - {row['Unit Name']}")
+            st.markdown("---")
+            for col in all_columns:
+                if col in topic_columns or col in concept_columns or col in ["RH Level", "Unit Number", "Unit Name"]:
+                    query = topic_query if col in topic_columns else concept_query
+                    highlighted_text = highlight_fuzzy_match(row[col], query)
+                    st.markdown(f"**{col}:** {highlighted_tex
