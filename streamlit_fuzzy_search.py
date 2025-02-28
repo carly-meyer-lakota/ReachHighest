@@ -117,4 +117,9 @@ if st.button("Search"):
                 if col in topic_columns or col in concept_columns or col in ["RH Level", "Unit Number", "Unit Name"]:
                     query = topic_query if col in topic_columns else concept_query
                     highlighted_text = highlight_fuzzy_match(row[col], query)
-                    st.markdown(f"**{col}:** {highlighted_tex
+                    st.markdown(f"**{col}:** {highlighted_text}", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"**{col}:** {row[col]}")
+            st.markdown("---")
+    else:
+        st.write("No matches found.")
