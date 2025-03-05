@@ -1,13 +1,16 @@
 import streamlit as st
 import pandas as pd
-from fuzzywuzzy import process
 import re
 import nltk
 from nltk.corpus import wordnet
+from nltk.stem import WordNetLemmatizer
+from rapidfuzz import process, fuzz
+from difflib import SequenceMatcher
 
 # Download necessary WordNet data
 nltk.download('wordnet')
-nltk.download('omw-1.4')  # For multilingual WordNet support, if needed
+nltk.download('omw-1.4')  # Multilingual support
+nltk.download('punkt')  # Tokenization support
 
 # Load dataset
 @st.cache_data
@@ -20,6 +23,9 @@ data = load_data()
 topic_columns = ["Unit Name", "Vocabulary Words", "Genres"]
 concept_columns = ["Language Skill", "Thinking Map Skill", "Reading Skill", "Grammar Skill", "Phonics Skill", "Project"]
 all_columns = ["RH Level", "Unit Number", "Unit Name", "Language Skill", "Vocabulary Words", "Thinking Map Skill", "Reading Skill", "Genres", "Grammar Skill", "Project", "Phonics Skill"]
+
+# Initialize lemmatizer
+lemmatizer = WordNetLemmatizer()
 
 # Streamlit UI
 st.title("Reach Higher Curriculum Search")
@@ -41,72 +47,91 @@ def clear_other(search_type):
 topic_query = col1.text_input("Search by Topic", value=st.session_state['topic_query'], on_change=clear_other, args=("topic",))
 concept_query = col2.text_input("Search by Concept", value=st.session_state['concept_query'], on_change=clear_other, args=("concept",))
 
-# Functions for synonym and related term expansion
-def get_synonyms(word):
-    synonyms = set()
+# Function to lemmatize and tokenize a phrase
+def preprocess_text(text):
+    tokens = nltk.word_tokenize(text.lower())  # Tokenize and convert to lowercase
+    lemmatized_tokens = [lemmatizer.lemmatize(token) for token in tokens]  # Lemmatization
+    return " ".join(sorted(lemmatized_tokens))  # Sort tokens alphabetically
+
+# Function to get synonyms, hypernyms, and hyponyms
+def get_expanded_terms(word):
+    terms = set()
     for syn in wordnet.synsets(word):
         for lemma in syn.lemmas():
-            synonyms.add(lemma.name())
-    return list(synonyms)
-
-def get_related_terms(word):
-    related_terms = set()
-    for syn in wordnet.synsets(word):
-        # Add hypernyms (broader terms)
+            terms.add(lemma.name().replace("_", " "))  # Synonyms
         for hypernym in syn.hypernyms():
-            related_terms.add(hypernym.name().split('.')[0])
-        # Add hyponyms (narrower terms)
+            terms.add(hypernym.name().split('.')[0])  # Broader terms
         for hyponym in syn.hyponyms():
-            related_terms.add(hyponym.name().split('.')[0])
-    return list(related_terms)
+            terms.add(hyponym.name().split('.')[0])  # Narrower terms
+    return list(terms)
 
-# Fuzzy search function
-def fuzzy_search(query, data, columns):
+# Function to compute similarity using RapidFuzz and difflib
+def compute_similarity(query, text):
+    if pd.isna(text):
+        return 0
+    processed_query = preprocess_text(query)
+    processed_text = preprocess_text(str(text))
+
+    # Use RapidFuzz for fuzzy matching
+    rf_score = fuzz.token_sort_ratio(processed_query, processed_text)
+
+    # Use difflib's SequenceMatcher for approximate similarity
+    diff_score = SequenceMatcher(None, processed_query, processed_text).ratio() * 100  # Convert to percentage
+
+    # Return the maximum of the two scores
+    return max(rf_score, diff_score)
+
+# Function to search for best matches
+def fuzzy_search(query, data, columns, threshold=50):
     matches = []
     for _, row in data.iterrows():
         best_score = 0
         for col in columns:
             if pd.notna(row[col]):
-                score = process.extractOne(query, [str(row[col])])[1]
+                score = compute_similarity(query, row[col])
                 best_score = max(best_score, score)
-        if best_score > 50:
+        if best_score >= threshold:
             matches.append({'score': best_score, 'row': row})
     return matches
 
-# Expanded search function
+# Expanded search function with synonyms and related terms
 def expanded_search(query, data, columns):
-    expanded_terms = get_synonyms(query) + get_related_terms(query)  # Combine synonyms and related terms
+    expanded_terms = get_expanded_terms(query) + [query]  # Include original query
     results = []
     for term in expanded_terms:
-        # Perform fuzzy search for each expanded term
         results += fuzzy_search(term, data, columns)
     return sorted(results, key=lambda x: x['score'], reverse=True)
 
-# Highlight fuzzy match
+# Highlight fuzzy match in results
 def highlight_fuzzy_match(text, query):
     if pd.isna(text) or not query:
         return text
-    matches = process.extract(query, [text], limit=1)
-    if matches and matches[0][1] > 50:  # If match score is above threshold
-        match_text = matches[0][0]
-        pattern = re.compile(re.escape(match_text), re.IGNORECASE)
-        return pattern.sub(lambda match: f"<mark>{match.group(0)}</mark>", str(text))
+    processed_query = preprocess_text(query)
+    processed_text = preprocess_text(str(text))
+
+    # Find match using difflib
+    match = SequenceMatcher(None, processed_query, processed_text).find_longest_match(0, len(processed_query), 0, len(processed_text))
+    
+    if match.size > 0:
+        matched_text = processed_text[match.b: match.b + match.size]
+        pattern = re.compile(re.escape(matched_text), re.IGNORECASE)
+        return pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", str(text))
+    
     return text
 
+# Perform search on button click
 if st.button("Search"):
     matches = []
 
     if topic_query:
-        # Use expanded search for topics with the specific topic columns
         matches = expanded_search(topic_query, data, topic_columns)
 
     if concept_query:
-        # Use expanded search for concepts with the specific concept columns
         matches += expanded_search(concept_query, data, concept_columns)
 
     # Sort matches by relevance
     matches.sort(reverse=True, key=lambda x: x['score'])
-   
+
     if matches:
         st.write(f"Found {len(matches)} matches")
         for match in matches:
