@@ -4,11 +4,15 @@ from fuzzywuzzy import process
 import re
 import nltk
 from nltk.corpus import wordnet
+from nltk.stem import WordNetLemmatizer
 
 # Download necessary NLTK data
 nltk.download('wordnet')
 nltk.download('omw-1.4')  # For multilingual WordNet support, if needed
 nltk.download('punkt')  # Fixes the tokenization error
+
+# Initialize lemmatizer
+lemmatizer = WordNetLemmatizer()
 
 # Load dataset
 @st.cache_data
@@ -61,6 +65,10 @@ def get_related_terms(word):
             related_terms.add(hyponym.name().split('.')[0])
     return list(related_terms)
 
+def lemmatize_word(word):
+    # Lemmatize word to its base form
+    return lemmatizer.lemmatize(word.lower())
+
 # Fuzzy search function
 def fuzzy_search(query, data, columns):
     matches = []
@@ -74,9 +82,10 @@ def fuzzy_search(query, data, columns):
             matches.append({'score': best_score, 'row': row})
     return matches
 
-# Expanded search function
+# Expanded search function with lemmatization and synonyms
 def expanded_search(query, data, columns):
-    expanded_terms = get_synonyms(query) + get_related_terms(query)  # Combine synonyms and related terms
+    lemmatized_query = lemmatize_word(query)
+    expanded_terms = get_synonyms(lemmatized_query) + get_related_terms(lemmatized_query)  # Combine synonyms and related terms
     results = []
     for term in expanded_terms:
         # Perform fuzzy search for each expanded term
